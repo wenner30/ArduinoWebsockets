@@ -1,0 +1,159 @@
+#include <ArduinoWebsockets.h>
+#include <ESP8266WiFi.h>
+
+const char* ssid = "NETGEAR37";  // Enter SSID
+const char* password = "000";  // Enter Password
+const char* websockets_server_host = "192.168.0.13";  // Enter server address
+const uint16_t websockets_server_port = 80;  // Enter server port
+
+using namespace websockets;
+
+WebsocketsClient client;
+unsigned long lastReconnectAttempt = 0;
+const unsigned long reconnectInterval = 2000;  // 2 seconds
+unsigned long lastPingTime = 0;
+unsigned long lastCounterSendTime = 0;
+const unsigned long counterInterval = 1000;  // 1 second between counter increments
+int counter1 = 1;  // Initialize the counter
+bool isCounterRunning = false;  // Control whether the counter is running
+
+#ifdef DEBUG_ESP_PORT
+#define DEBUG_MSG(...) DEBUG_ESP_PORT.printf( __VA_ARGS__ )
+#else
+#define DEBUG_MSG(...)
+#endif
+
+// Global variable to store received message
+String receivedCommand = "";
+
+// WiFi and WebSocket setup
+void setup() {
+    Serial.begin(115200);
+
+    delay(3000);  // Optional bootup delay for stability
+    DEBUG_MSG("bootup...\n");
+WiFi.setSleepMode(WIFI_NONE_SLEEP);
+
+    // Connect to WiFi
+    WiFi.begin(ssid, password);
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+    // Wait for WiFi connection
+    for (int i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
+        Serial.print(".");
+        delay(1000);
+    }
+
+    // Check if connected to WiFi
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("No Wifi!");
+        return;
+    }
+
+    Serial.println("Connected to Wifi");
+    connectToWebSocket();
+
+    // WebSocket message callback
+    client.onMessage([&](WebsocketsMessage message) {
+        receivedCommand = message.data();  // Store the message to be processed later
+    });
+}
+
+// WebSocket connection function
+void connectToWebSocket() {
+    if (client.connect(websockets_server_host, websockets_server_port, "/")) {
+        Serial.println("Connected to WebSocket server!");
+        client.send("Hello Server");
+    } else {
+        Serial.println("Failed to connect to WebSocket server");
+    }
+}
+
+// Start the counter
+void startCounter() {
+    isCounterRunning = true;
+    Serial.println("Counter started");
+}
+
+// Stop the counter
+void stopCounter() {
+    isCounterRunning = false;
+    Serial.println("Counter stopped");
+}
+
+// Reset the counter
+void resetCounter() {
+    counter1 = 1;
+    Serial.println("Counter reset to 1");
+}
+
+// Handle commands from the server
+void handleCommand(const String& command) {
+    if (command == "From server: on") {
+        startCounter();
+    } else if (command == "From server: off") {
+        stopCounter();
+    } else if (command == "From server: reset") {
+        resetCounter();
+    } else {
+        Serial.println(command);
+    }
+}
+
+void loop() {
+    //DEBUG_MSG("loop %d\n", millis());
+
+    // Send a ping message every 30 seconds to keep the connection alive
+    /*if (millis() - lastPingTime > 30000) {
+        client.ping();
+        lastPingTime = millis();
+    }*/
+
+    // Attempt reconnection if disconnected
+    if (!client.available()) {
+        if (millis() - lastReconnectAttempt >= reconnectInterval) {
+            lastReconnectAttempt = millis();
+            connectToWebSocket();
+        }
+    } else {
+        client.poll();  // Poll for incoming messages
+    }
+
+    // Process the received command outside the callback
+    if (receivedCommand != "") {
+        handleCommand(receivedCommand);  // Process the command
+        receivedCommand = "";  // Clear the message once processed
+    }
+
+    // Periodically send the counter value to the server every 1 second, only if counter is running
+    if (isCounterRunning && millis() - lastCounterSendTime > counterInterval) {
+        if (client.available()) {
+            String counterMsg = "counter: " + String(counter1);
+            client.send(counterMsg);
+
+            counter1++;  // Increment the counter
+            if (counter1 > 10) {
+                counter1 = 1;  // Reset the counter after reaching 10
+            }
+
+            lastCounterSendTime = millis();  // Reset the send timer
+        } else {
+            Serial.println("Not connected to WebSocket server, cannot send counter");
+        }
+    }
+
+    // Check if there's data available in the Serial monitor
+    if (Serial.available() > 0) {
+        String input = Serial.readStringUntil('\n');  // Read the input from Serial Monitor
+        input.trim();  // Remove any leading or trailing whitespace
+
+        if (client.available()) {
+            client.send(input);  // Send the input to the WebSocket server
+            Serial.print("Sent to server: ");
+            Serial.println(input);  // Print confirmation of sending
+        } else {
+            Serial.println("Not connected to WebSocket server");
+        }
+    }
+
+    delay(100);  // Reduced delay for better responsiveness
+}
