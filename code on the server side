@@ -1,0 +1,48 @@
+const WebSocket = require('ws'); // Import WebSocket library
+const readline = require('readline'); // Import readline for interactive input
+
+// Create a WebSocket server on port 80
+const wss = new WebSocket.Server({ port: 80 });
+
+console.log("WebSocket server listening on port 80");
+
+let clientSocket = null; // Store the connected client
+
+wss.on('connection', function connection(ws) {
+  clientSocket = ws; // Store the client connection
+  console.log('Client connected');
+
+  // When a message is received from the client
+  ws.on('message', function incoming(message) {
+    console.log('received data:', message.toString());
+    // Send an automatic response
+    ws.send('Server response: ' + message.toString());
+  });
+
+  // Handle client disconnection
+  ws.on('close', () => {
+    console.log('Client disconnected');
+    clientSocket = null; // Clear client socket when disconnected
+  });
+
+  // Handle errors
+  ws.on('error', (err) => {
+    console.log('WebSocket error:', err);
+  });
+});
+
+//Create an interface to read input from the terminal
+const rl = readline.createInterface({
+  input: process.stdin,
+  //output: process.stdout
+});
+
+// Send message to the client when typing in the server console
+rl.on('line', (input) => {
+  if (clientSocket) {
+    clientSocket.send('From server: ' + input);
+    console.log('Sent to client:', input);
+  } else {
+    console.log('No client connected to send message');
+  }
+});
